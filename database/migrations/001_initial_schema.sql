@@ -33,7 +33,11 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- 3. ORGANISATION MEMBERS (RBAC)
-CREATE TYPE org_role AS ENUM ('owner', 'admin', 'finance_manager', 'approver', 'viewer');
+DO $$ BEGIN
+    CREATE TYPE org_role AS ENUM ('owner', 'admin', 'finance_manager', 'approver', 'viewer');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
 
 CREATE TABLE IF NOT EXISTS organisation_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -263,6 +267,7 @@ CREATE TABLE IF NOT EXISTS payment_provider_events (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     payment_id UUID REFERENCES payments(id) ON DELETE SET NULL,
     provider VARCHAR(50) NOT NULL DEFAULT 'blaaiz',
+    event_id VARCHAR(255),
     event_type VARCHAR(100) NOT NULL,
     provider_reference VARCHAR(100),
     payload JSONB NOT NULL,
@@ -330,5 +335,7 @@ CREATE INDEX IF NOT EXISTS idx_payments_idempotency ON payments(idempotency_key)
 CREATE INDEX IF NOT EXISTS idx_payments_ref ON payments(provider_reference);
 CREATE INDEX IF NOT EXISTS idx_audit_org_created ON payment_audit_events(organisation_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_resource ON payment_audit_events(resource_type, resource_id);
+ALTER TABLE payment_provider_events ADD COLUMN IF NOT EXISTS event_id VARCHAR(255);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_event_id ON payment_provider_events(provider, event_id) WHERE event_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, is_read);
 

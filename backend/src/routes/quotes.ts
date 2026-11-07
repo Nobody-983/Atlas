@@ -58,6 +58,7 @@ quotesRouter.post('/', async (req, res, next) => {
         ...quoteRes.rows[0],
         provider: 'blaaiz',
         isEmulator: blaaizClient.isUsingEmulator(),
+        executionMode: blaaizClient.isUsingEmulator() ? 'SIMULATED_EMULATOR' : 'LIVE_PROVIDER_RAIL',
         details: feeBreakdown,
       },
     });
@@ -71,7 +72,12 @@ quotesRouter.get('/rates', async (req, res, next) => {
   try {
     const { search } = req.query;
     const rates = await blaaizClient.getRates(search as string);
-    res.json({ success: true, isEmulator: blaaizClient.isUsingEmulator(), rates });
+    res.json({
+      success: true,
+      isEmulator: blaaizClient.isUsingEmulator(),
+      executionMode: blaaizClient.isUsingEmulator() ? 'SIMULATED_EMULATOR' : 'LIVE_PROVIDER_RAIL',
+      rates,
+    });
   } catch (err) {
     next(err);
   }

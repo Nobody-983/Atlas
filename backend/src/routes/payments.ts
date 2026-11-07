@@ -335,18 +335,43 @@ paymentsRouter.post('/initiate', async (req, res, next) => {
     }
 
     // 3. Initiate Payout via Blaaiz Provider Adapter
-    const providerPayout = await blaaizClient.createPayout({
-      wallet_id: 'b18ed308-5ac5-4e9e-bb16-8c03ec2d3c01',
-      customer_id: '9d4c4ec5-59ea-4130-bf8a-6a5edec401ee',
-      method: 'bank_transfer',
-      from_currency_id: pr.source_currency,
-      to_currency_id: pr.destination_currency,
-      from_amount: Number(pr.source_amount_minor) / 100,
-      bank_id: pr.bank_code || '1',
-      account_number: pr.account_number,
-      routing_number: pr.routing_number,
-      reference: idempotencyKey,
-    });
+    let providerPayout: any;
+    let isAmbiguous = false;
+    let payoutError: any = null;
+
+    try {
+      providerPayout = await blaaizClient.createPayout({
+        wallet_id: config.blaaiz.businessWalletId || 'b18ed308-5ac5-4e9e-bb16-8c03ec2d3c01',
+        customer_id: '9d4c4ec5-59ea-4130-bf8a-6a5edec401ee',
+        method: 'bank_transfer',
+        from_currency_id: pr.source_currency,
+        to_currency_id: pr.destination_currency,
+        from_amount: Number(pr.source_amount_minor) / 100,
+        bank_id: pr.bank_code || '1',
+        account_number: pr.account_number,
+        routing_number: pr.routing_number,
+        reference: idempotencyKey,
+      });
+    } catch (err: any) {
+      // Priority 1: Real payout timeout or ambiguous provider response results in UNKNOWN/REQUIRES_RECONCILIATION, NEVER simulated success
+      isAmbiguous = true;
+      payoutError = err;
+      providerPayout = {
+        id: idempotencyKey,
+        reference: idempotencyKey,
+        status: 'pending',
+        from_amount: Number(pr.source_amount_minor) / 100,
+        to_amount: Number(pr.destination_amount_minor) / 100,
+        from_currency: pr.source_currency,
+        to_currency: pr.destination_currency,
+        fee: Number(pr.provider_fee_minor || 0) / 100,
+        created_at: new Date().toISOString(),
+      };
+    }
+
+    const initialStatus = isAmbiguous ? 'requires_reconciliation' : providerPayout.status;
+    const errorCode = isAmbiguous ? 'PROVIDER_TIMEOUT_OR_AMBIGUOUS' : null;
+    const errorMessage = isAmbiguous ? (payoutError?.message || 'Provider response timeout') : null;
 
     // 4. Save Payment State Transactionally
     const payment = await withTransaction(async (client) => {
@@ -354,8 +379,9 @@ paymentsRouter.post('/initiate', async (req, res, next) => {
         `INSERT INTO payments
          (organisation_id, payment_request_id, quote_id, recipient_id, recipient_account_id, initiated_by,
           provider, provider_reference, idempotency_key, source_currency, destination_currency,
-          source_amount_minor, destination_amount_minor, exchange_rate, provider_fee_minor, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'blaaiz', $7, $8, $9, $10, $11, $12, $13, $14, $15)
+          source_amount_minor, destination_amount_minor, exchange_rate, provider_fee_minor, status,
+          error_code, error_message)
+         VALUES ($1, $2, $3, $4, $5, $6, 'blaaiz', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING *`,
         [
           pr.organisation_id,
@@ -372,7 +398,9 @@ paymentsRouter.post('/initiate', async (req, res, next) => {
           pr.destination_amount_minor,
           pr.exchange_rate || 0.00066225,
           pr.provider_fee_minor || 0,
-          providerPayout.status,
+          initialStatus,
+          errorCode,
+          errorMessage,
         ]
       );
 
@@ -391,20 +419,34 @@ paymentsRouter.post('/initiate', async (req, res, next) => {
       organisationId: pr.organisation_id,
       resourceType: 'payment',
       resourceId: payment.id,
-      action: 'payout_initiated',
+      action: isAmbiguous ? 'payout_ambiguous_timeout' : 'payout_initiated',
       actorName: 'Operator',
       actorRole: 'finance_manager',
       metadata: {
         providerReference: providerPayout.reference,
-        status: providerPayout.status,
+        status: initialStatus,
         destinationAmountMinor: pr.destination_amount_minor,
+        isAmbiguous,
+        executionMode: blaaizClient.isUsingEmulator() ? 'SIMULATED_EMULATOR' : 'LIVE_PROVIDER_RAIL',
       },
     });
+
+    if (isAmbiguous) {
+      return res.status(202).json({
+        success: false,
+        warning: 'Payout initiated but provider response was ambiguous or timed out. Transitioned to requires_reconciliation state.',
+        payment,
+        providerDetails: providerPayout,
+        executionMode: blaaizClient.isUsingEmulator() ? 'SIMULATED_EMULATOR' : 'LIVE_PROVIDER_RAIL',
+        isEmulator: blaaizClient.isUsingEmulator(),
+      });
+    }
 
     res.status(201).json({
       success: true,
       payment,
       providerDetails: providerPayout,
+      executionMode: blaaizClient.isUsingEmulator() ? 'SIMULATED_EMULATOR' : 'LIVE_PROVIDER_RAIL',
       isEmulator: blaaizClient.isUsingEmulator(),
     });
   } catch (err) {

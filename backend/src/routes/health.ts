@@ -22,7 +22,8 @@ healthRouter.get('/', async (req, res) => {
       },
       blaaiz: {
         baseUrl: config.blaaiz.baseUrl,
-        mode: blaaizClient.isUsingEmulator() ? 'sandbox_emulator' : 'live_sandbox_api',
+        mode: blaaizClient.isUsingEmulator() ? 'sandbox_emulator' : 'live_api',
+        executionMode: blaaizClient.isUsingEmulator() ? 'SIMULATED_EMULATOR' : 'LIVE_PROVIDER_RAIL',
         isEmulatorActive: blaaizClient.isUsingEmulator(),
         credentialsConfigured: Boolean(config.blaaiz.clientId && config.blaaiz.clientSecret),
         walletId: config.blaaiz.businessWalletId,

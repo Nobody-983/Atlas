@@ -10,20 +10,22 @@ import {
   BlaaizTokenResponse,
 } from './types.js';
 
+export const BLAIIZ_USER_AGENT = 'Atlas-Platform/1.0';
+
 export class BlaaizClient {
   private baseUrl: string;
   private clientId: string;
   private clientSecret: string;
-  private cachedToken: string | null = null;
-  private tokenExpiresAt: number = 0;
+  // Scope-aware token caching: maps normalized scope string to access token & expiration
+  private tokenCache: Map<string, { token: string; expiresAt: number }> = new Map();
   private useEmulator: boolean;
 
   constructor() {
     this.baseUrl = config.blaaiz.baseUrl;
     this.clientId = config.blaaiz.clientId;
     this.clientSecret = config.blaaiz.clientSecret;
-    // If credentials are blank or emulator is explicitly enabled, use sandbox emulator
-    this.useEmulator = !this.clientId || !this.clientSecret || config.blaaiz.enableEmulator;
+    // Explicit emulator mode: never silently fall back if emulator is disabled
+    this.useEmulator = config.blaaiz.enableEmulator;
   }
 
   public isUsingEmulator(): boolean {
@@ -31,17 +33,33 @@ export class BlaaizClient {
   }
 
   /**
-   * Retrieves OAuth 2.0 Bearer access token via Client Credentials grant.
-   * Caches token in-memory and refreshes 60s before expiry.
+   * Helper to normalize scope strings so permutations match the same cached token.
    */
-  public async getAccessToken(scope = 'payout:create fees:read currency:read wallet:read'): Promise<string> {
+  private normalizeScope(scope: string): string {
+    return scope.trim().split(/\s+/).filter(Boolean).sort().join(' ');
+  }
+
+  /**
+   * Retrieves OAuth 2.0 Bearer access token via Client Credentials grant.
+   * Tokens are cached strictly by requested scope set to prevent scope pollution.
+   */
+  public async getAccessToken(scope = 'payout:create fees:read wallet:read'): Promise<string> {
     if (this.useEmulator) {
       return 'blaaiz_dev_emulator_bearer_token_atlas';
     }
 
+    if (!this.clientId || !this.clientSecret) {
+      throw new ProviderError(
+        'Blaaiz Client ID and Client Secret must be configured when emulator mode is disabled.'
+      );
+    }
+
+    const normalizedScope = this.normalizeScope(scope);
     const now = Date.now();
-    if (this.cachedToken && this.tokenExpiresAt > now + 60000) {
-      return this.cachedToken;
+    const cached = this.tokenCache.get(normalizedScope);
+
+    if (cached && cached.expiresAt > now + 60000) {
+      return cached.token;
     }
 
     try {
@@ -56,6 +74,7 @@ export class BlaaizClient {
         method: 'POST',
         headers: {
           'Content-Type': 'application/x-www-form-urlencoded',
+          'User-Agent': BLAIIZ_USER_AGENT,
         },
         body: bodyParams.toString(),
       });
@@ -66,13 +85,17 @@ export class BlaaizClient {
       }
 
       const data = (await res.json()) as BlaaizTokenResponse;
-      this.cachedToken = data.access_token;
-      this.tokenExpiresAt = now + (data.expires_in || 3600) * 1000;
-      return this.cachedToken;
+      const expiresAt = now + (data.expires_in || 3600) * 1000;
+
+      this.tokenCache.set(normalizedScope, {
+        token: data.access_token,
+        expiresAt,
+      });
+
+      return data.access_token;
     } catch (err: any) {
-      console.warn('[Blaaiz Client] Failed to connect to live sandbox OAuth endpoint. Falling back to Emulator:', err.message);
-      this.useEmulator = true;
-      return 'blaaiz_dev_emulator_bearer_token_atlas';
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError(`OAuth token request network error: ${err.message}`);
     }
   }
 
@@ -92,19 +115,20 @@ export class BlaaizClient {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
+          'User-Agent': BLAIIZ_USER_AGENT,
         },
         body: JSON.stringify(req),
       });
 
       if (!res.ok) {
         const errorText = await res.text();
-        throw new ProviderError(`Failed to fetch fee breakdown: ${errorText}`);
+        throw new ProviderError(`Failed to fetch fee breakdown (${res.status}): ${errorText}`);
       }
 
       return (await res.json()) as BlaaizFeeBreakdownResponse;
     } catch (err: any) {
-      console.warn('[Blaaiz Client] Remote fees/breakdown failed. Using sandbox emulator:', err.message);
-      return BlaaizSandboxEmulator.calculateFeeBreakdown(req);
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError(`Fee breakdown network error: ${err.message}`);
     }
   }
 
@@ -133,23 +157,26 @@ export class BlaaizClient {
       const res = await fetch(url.toString(), {
         headers: {
           Authorization: `Bearer ${token}`,
+          'User-Agent': BLAIIZ_USER_AGENT,
         },
       });
 
       if (!res.ok) {
-        throw new ProviderError(`Failed to fetch rates: ${await res.text()}`);
+        throw new ProviderError(`Failed to fetch rates (${res.status}): ${await res.text()}`);
       }
 
       return (await res.json()) as BlaaizRateItem[];
     } catch (err: any) {
-      console.warn('[Blaaiz Client] Remote rates failed. Using sandbox emulator:', err.message);
-      return BlaaizSandboxEmulator.listRates();
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError(`Rates network error: ${err.message}`);
     }
   }
 
   /**
    * Initiates a fiat payout through the Blaaiz Payout API.
    * Endpoint: POST /api/external/payout
+   * 
+   * CRITICAL SAFETY: Never falls back to the sandbox emulator on remote failure or timeout.
    */
   public async createPayout(req: BlaaizPayoutRequest): Promise<BlaaizPayoutResponse> {
     if (this.useEmulator) {
@@ -163,19 +190,21 @@ export class BlaaizClient {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/json',
+          'User-Agent': BLAIIZ_USER_AGENT,
         },
         body: JSON.stringify(req),
       });
 
       if (!res.ok) {
         const errText = await res.text();
-        throw new ProviderError(`Payout initiation rejected by Blaaiz: ${errText}`);
+        throw new ProviderError(`Payout initiation rejected by Blaaiz (${res.status}): ${errText}`);
       }
 
       return (await res.json()) as BlaaizPayoutResponse;
     } catch (err: any) {
-      console.warn('[Blaaiz Client] Remote payout initiation failed. Falling back to emulator:', err.message);
-      return BlaaizSandboxEmulator.createPayout(req);
+      if (err instanceof ProviderError) throw err;
+      // Do NOT fall back to emulator; rethrow for upstream reconciliation handling
+      throw new ProviderError(`Payout initiation network error or timeout: ${err.message}`);
     }
   }
 
@@ -193,19 +222,20 @@ export class BlaaizClient {
       const res = await fetch(`${this.baseUrl}/api/external/payout/${payoutId}`, {
         headers: {
           Authorization: `Bearer ${token}`,
+          'User-Agent': BLAIIZ_USER_AGENT,
         },
       });
 
       if (!res.ok) {
-        throw new ProviderError(`Failed to fetch payout status: ${await res.text()}`);
+        throw new ProviderError(`Failed to fetch payout status (${res.status}): ${await res.text()}`);
       }
 
       return (await res.json()) as { status: string; reference: string };
     } catch (err: any) {
-      return { status: 'processing', reference: payoutId };
+      if (err instanceof ProviderError) throw err;
+      throw new ProviderError(`Status inquiry network error: ${err.message}`);
     }
   }
 }
 
 export const blaaizClient = new BlaaizClient();
-

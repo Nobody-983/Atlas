@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import fs from 'fs';
+import path from 'path';
 import { analyticsRouter } from './routes/analytics.js';
 import { approvalsRouter } from './routes/approvals.js';
 import { auditRouter } from './routes/audit.js';
@@ -53,6 +55,25 @@ app.use('/api/v1/webhooks', webhooksRouter);
 app.use('/api/v1/reconciliation', reconciliationRouter);
 app.use('/api/v1/analytics', analyticsRouter);
 app.use('/api/v1/audit', auditRouter);
+
+// Serve compiled frontend SPA if dist is present (e.g. unified Render Web Service)
+const frontendDistPath = path.resolve(process.cwd(), 'frontend/dist');
+const altFrontendDistPath = path.resolve(process.cwd(), '../frontend/dist');
+const resolvedDistPath = fs.existsSync(frontendDistPath)
+  ? frontendDistPath
+  : fs.existsSync(altFrontendDistPath)
+    ? altFrontendDistPath
+    : null;
+
+if (resolvedDistPath) {
+  app.use(express.static(resolvedDistPath));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) {
+      return next();
+    }
+    res.sendFile(path.join(resolvedDistPath, 'index.html'));
+  });
+}
 
 // Global Error Handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
