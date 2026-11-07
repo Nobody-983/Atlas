@@ -7,13 +7,16 @@
     "backend",
     "frontend"
   ],
+  "dependencies": {
+    "dotenv": "^8.2.0",
+    "node-fetch": "^3.3.2"
+  },
   "scripts": {
-    "dev": "node scripts/dev.js",
-    "start": "node scripts/migrate.js && node backend/dist/index.js",
-    "build": "npm run build -w backend && npm run build -w frontend",
+    "dev": "node init && node scripts/dev.js",
+    "start": "node init && node scripts/migrate.js && node backend/dist/index.js",
+    "build": "node init && npm run build -w backend && npm run build -w frontend",
     "test": "npm test -w backend && npm test -w frontend",
     "db:migrate": "node scripts/migrate.js",
     "db:seed": "node scripts/seed.js"
   }
 }
-
