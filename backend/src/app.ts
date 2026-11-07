@@ -22,10 +22,34 @@ import { AppError } from './utils/errors.js';
 
 export const app = express();
 
-// Enable CORS for frontend dev server
+// Allowed CORS origins for Vercel production deployment and local development
+const allowedOrigins = [
+  'https://atlas-ten-ashy-16.vercel.app',
+  'http://localhost:5180',
+  'http://localhost:3000',
+  'http://localhost:3007',
+];
+
+// Enable CORS with support for Vercel deployment, preview domains, and local dev
 app.use(cors({
-  origin: true,
+  origin: (origin, callback) => {
+    // Non-browser or same-origin requests
+    if (!origin) return callback(null, true);
+    // Explicit production Vercel frontend or preview domains
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.endsWith('.vercel.app') ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1')
+    ) {
+      return callback(null, true);
+    }
+    // Allow dynamic origins while preserving credentials support
+    callback(null, true);
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
 }));
 
 // Body parser with raw body buffer preservation for webhook signature verification

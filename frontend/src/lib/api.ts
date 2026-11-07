@@ -1,4 +1,38 @@
-const API_BASE = '/api/v1';
+export function getApiBase(): string {
+  // 1. Explicit Vite environment variable (VITE_API_URL or VITE_BACKEND_URL)
+  const envUrl = (
+    (typeof import.meta !== 'undefined' && import.meta.env && (import.meta.env.VITE_API_URL || import.meta.env.VITE_BACKEND_URL)) ||
+    ''
+  ).trim();
+
+  if (envUrl) {
+    const sanitized = envUrl.replace(/\/+$/, '');
+    return sanitized.endsWith('/api/v1') ? sanitized : `${sanitized}/api/v1`;
+  }
+
+  // 2. In browser environments: if running on Vercel or any non-localhost domain (excluding Render origin)
+  if (typeof window !== 'undefined' && window.location) {
+    const hostname = window.location.hostname;
+    if (
+      hostname.includes('vercel.app') ||
+      (hostname !== 'localhost' && hostname !== '127.0.0.1' && !hostname.includes('onrender.com'))
+    ) {
+      return 'https://atlas-fa5m.onrender.com/api/v1';
+    }
+  }
+
+  // 3. Fallback for production builds not hosted directly on Render
+  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.PROD) {
+    if (typeof window !== 'undefined' && !window.location.hostname.includes('onrender.com')) {
+      return 'https://atlas-fa5m.onrender.com/api/v1';
+    }
+  }
+
+  // 4. Default for local dev (proxied by Vite server) or same-origin backend serving
+  return '/api/v1';
+}
+
+export const API_BASE = getApiBase();
 
 export const authStorage = {
   getToken: (): string | null => {
@@ -45,7 +79,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
     headers.set('Content-Type', 'application/json');
   }
 
-  const res = await fetch(`${API_BASE}${endpoint}`, {
+  const base = getApiBase();
+  const res = await fetch(`${base}${endpoint}`, {
     ...options,
     headers,
   });

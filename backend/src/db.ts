@@ -1,3 +1,6 @@
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import pg from 'pg';
 import { config } from './config.js';
 
@@ -124,4 +127,70 @@ export async function checkDatabaseHealth(): Promise<{ status: string; latencyMs
     status: 'connected',
     latencyMs: Date.now() - start,
   };
+}
+
+export async function ensureDatabaseSchema(): Promise<void> {
+  const currentPool = getPool();
+
+  // Resolve migrations directory across possible execution contexts
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const candidateMigrationDirs = [
+    path.resolve(process.cwd(), 'database/migrations'),
+    path.resolve(process.cwd(), '../database/migrations'),
+    path.resolve(__dirname, '../../database/migrations'),
+    path.resolve(__dirname, '../../../database/migrations'),
+  ];
+  const migrationsDir = candidateMigrationDirs.find((dir) => fs.existsSync(dir));
+
+  if (!migrationsDir) {
+    console.warn('[Database Schema] Migrations directory not found in candidates, skipping auto-migration.');
+    return;
+  }
+
+  const files = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.sql'))
+    .sort();
+
+  for (const file of files) {
+    const filePath = path.join(migrationsDir, file);
+    const sql = fs.readFileSync(filePath, 'utf-8');
+    try {
+      await currentPool.query(sql);
+    } catch (err) {
+      console.error(`[Database Schema] Error applying migration ${file}:`, err);
+      throw err;
+    }
+  }
+  console.log(`[Database Schema] Verified ${files.length} idempotent migration(s).`);
+
+  // If users table is empty (e.g. freshly provisioned cloud database), apply baseline seeds
+  try {
+    const userCountRes = await currentPool.query(`SELECT COUNT(*) as count FROM users`);
+    const count = parseInt(userCountRes.rows[0]?.count || '0', 10);
+    if (count === 0) {
+      console.log('[Database Schema] Clean database detected (0 users). Applying initial baseline demo seeds...');
+      const candidateSeedDirs = [
+        path.resolve(process.cwd(), 'database/seeds'),
+        path.resolve(process.cwd(), '../database/seeds'),
+        path.resolve(__dirname, '../../database/seeds'),
+        path.resolve(__dirname, '../../../database/seeds'),
+      ];
+      const seedsDir = candidateSeedDirs.find((dir) => fs.existsSync(dir));
+      if (seedsDir) {
+        const seedFiles = fs
+          .readdirSync(seedsDir)
+          .filter((f) => f.endsWith('.sql'))
+          .sort();
+        for (const sFile of seedFiles) {
+          const sPath = path.join(seedsDir, sFile);
+          const sSql = fs.readFileSync(sPath, 'utf-8');
+          await currentPool.query(sSql);
+        }
+        console.log(`[Database Schema] Initial baseline demo seeds applied successfully.`);
+      }
+    }
+  } catch (seedErr) {
+    console.warn('[Database Schema] Baseline seed check skipped:', seedErr);
+  }
 }
