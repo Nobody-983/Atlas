@@ -50,14 +50,14 @@ BEGIN
     (org_kibo_id, 'Kibo Digital Media & Studios', 'kibo-digital', 'limited_company', 'KEN', 'KES', 'P051829402X', 'CPR-2022-8819')
     ON CONFLICT (id) DO NOTHING;
 
-    -- 2. INSERT USERS (Password is 'atlas123' bcrypt hash)
-    INSERT INTO users (id, email, full_name, password_hash, phone_number)
+    -- 2. INSERT USERS (Password is 'StrongPassword123!' bcrypt hash)
+    INSERT INTO users (id, email, full_name, password_hash, phone_number, is_email_verified)
     VALUES
-    (user_amara_id, 'amara@apeximports.ng', 'Amara Okafor', '$2b$10$vI8aWBnW3fID.ZQ4/ZO2GuvqQ9O5Q0WdD9dcmzJkYfJ31W1fI2iC2', '+2348039201928'),
-    (user_tunde_id, 'tunde@apeximports.ng', 'Tunde Bakare', '$2b$10$vI8aWBnW3fID.ZQ4/ZO2GuvqQ9O5Q0WdD9dcmzJkYfJ31W1fI2iC2', '+2348028192039'),
-    (user_david_id, 'david@apeximports.ng', 'David Adeleke', '$2b$10$vI8aWBnW3fID.ZQ4/ZO2GuvqQ9O5Q0WdD9dcmzJkYfJ31W1fI2iC2', '+2348057281920'),
-    (user_zainab_id, 'zainab@apeximports.ng', 'Zainab Bello', '$2b$10$vI8aWBnW3fID.ZQ4/ZO2GuvqQ9O5Q0WdD9dcmzJkYfJ31W1fI2iC2', '+2348098271829')
-    ON CONFLICT (id) DO NOTHING;
+    (user_amara_id, 'amara@apeximports.ng', 'Amara Okafor', '$2b$10$7q4AyNVQNKS5fcbSv6pb9ePwORQ1F6ReVp3X7XX9WJ3iv1ho21OGC', '+2348039201928', TRUE),
+    (user_tunde_id, 'tunde@apeximports.ng', 'Tunde Bakare', '$2b$10$7q4AyNVQNKS5fcbSv6pb9ePwORQ1F6ReVp3X7XX9WJ3iv1ho21OGC', '+2348028192039', TRUE),
+    (user_david_id, 'david@apeximports.ng', 'David Adeleke', '$2b$10$7q4AyNVQNKS5fcbSv6pb9ePwORQ1F6ReVp3X7XX9WJ3iv1ho21OGC', '+2348057281920', TRUE),
+    (user_zainab_id, 'zainab@apeximports.ng', 'Zainab Bello', '$2b$10$7q4AyNVQNKS5fcbSv6pb9ePwORQ1F6ReVp3X7XX9WJ3iv1ho21OGC', '+2348098271829', TRUE)
+    ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash, is_email_verified = TRUE;
 
     -- 3. INSERT ORGANISATION MEMBERS
     INSERT INTO organisation_members (organisation_id, user_id, role)
